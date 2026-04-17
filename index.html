@@ -40,6 +40,11 @@
         #toast { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1e293b; color: white; padding: 10px 18px; border-radius: 40px; font-size: 13px; font-weight: 600; z-index: 3000; opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none; white-space: nowrap; }
         #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+        #loader { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--bg); padding: 18px 28px; border-radius: var(--radius); box-shadow: var(--shadow); font-size: 14px; font-weight: 600; color: var(--text); z-index: 2500; display: flex; align-items: center; gap: 12px; }
+        #loader.hide { display: none; }
+        .loader-spin { width: 20px; height: 20px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
         .btn-locate { position: absolute; bottom: 40px; right: 16px; z-index: 2000; width: 52px; height: 52px; background: var(--bg); border: none; border-radius: 14px; box-shadow: var(--shadow); font-size: 22px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s, transform 0.15s; }
         .btn-locate:active { transform: scale(0.93); background: var(--accent-light); }
 
@@ -60,7 +65,7 @@
         .popup-desc { color: var(--text); }
 
         .slider-wrap { margin-top: 8px; width: 100%; max-width: 260px; }
-        .slider-img { width: 100%; max-width: 220px; min-width: 80px; height: 150px; max-height: 25vw; min-height: 60px; object-fit: cover; border-radius: 8px; display: block; margin: 0 auto; cursor: zoom-in; transition: opacity 0.2s; }
+        .slider-img { width: 100%; max-width: 220px; min-width: 80px; height: 150px; max-height: 25vw; min-height: 60px; object-fit: cover; border-radius: 8px; display: block; margin: 0 auto; cursor: zoom-in; transition: opacity 0.2s; background: var(--border); }
         .slider-img:hover { opacity: 0.92; }
         .slider-controls { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; gap: 4px; }
         .slider-btn { flex: 1; padding: 6px; border: none; background: #2563eb; color: white; border-radius: 8px; font-size: 18px; cursor: pointer; line-height: 1; }
@@ -112,28 +117,30 @@
     <div class="search-wrap">
         <div class="search-input-row">
             <span class="search-icon">🔍</span>
-            <input type="text" id="search" placeholder="Поиск по номеру ТК..." autocomplete="off">
-            <button id="clear-btn" aria-label="Очистить">✕</button>
+            <input type="text" id="search" placeholder="Поиск по номеру ТК..." autocomplete="off" aria-label="Поиск">
+            <button id="clear-btn" aria-label="Очистить поиск">✕</button>
         </div>
         <div class="search-divider" id="divider"></div>
-        <div id="results"></div>
+        <div id="results" role="listbox"></div>
     </div>
 </div>
 
 <div id="map"></div>
-<button class="btn-locate" id="btn-locate" title="Моё местоположение">📍</button>
-<div id="toast"></div>
+<button class="btn-locate" id="btn-locate" title="Моё местоположение" aria-label="Моё местоположение">📍</button>
+<div id="toast" role="status" aria-live="polite"></div>
 
-<div id="lightbox" role="dialog" aria-modal="true">
+<div id="loader"><div class="loader-spin"></div><span>Загрузка объектов…</span></div>
+
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Просмотр фото">
     <div class="lb-header">
         <div class="lb-title" id="lb-title"></div>
         <div class="lb-counter" id="lb-counter"></div>
-        <button class="lb-close" id="lb-close">✕</button>
+        <button class="lb-close" id="lb-close" aria-label="Закрыть">✕</button>
     </div>
     <div class="lb-body" id="lb-body">
         <img class="lb-photo" id="lb-photo" src="" alt="">
-        <button class="lb-arrow lb-prev" id="lb-prev">‹</button>
-        <button class="lb-arrow lb-next" id="lb-next">›</button>
+        <button class="lb-arrow lb-prev" id="lb-prev" aria-label="Предыдущее фото">‹</button>
+        <button class="lb-arrow lb-next" id="lb-next" aria-label="Следующее фото">›</button>
     </div>
     <div class="lb-dots" id="lb-dots"></div>
     <div class="lb-hint" id="lb-hint">← Свайп для переключения →</div>
@@ -147,29 +154,37 @@
     'use strict';
 
     const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTnWaUNZ-F1bZZ3CdDQ5Ejushcn2RlsJ2aYVO6gu1j6FVD1Ha1kYWcSqp1TPdldtvRPmd114CkgjXBC/pub?output=csv';
+    const CACHE_KEY = 'tk_pavlodar_cache_v1';
+    const CACHE_TTL = 1000 * 60 * 30; // 30 минут
 
+    /* ─── Утилиты ─── */
     let _uid = 0;
-    function uid() { return 'sl_' + (++_uid); }
+    const uid = () => 'sl_' + (++_uid);
 
     function esc(s) {
-        if (!s) return '';
+        if (s == null) return '';
         return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
 
     const TRANSLIT = {a:'а',b:'б',c:'с',d:'д',e:'е',f:'ф',g:'г',h:'х',i:'и',j:'й',k:'к',l:'л',m:'м',n:'н',o:'о',p:'п',q:'к',r:'р',s:'с',t:'т',u:'у',v:'в',w:'в',x:'кс',y:'у',z:'з'};
     function normalize(str) {
         if (!str) return '';
-        return str.toString().toLowerCase().replace(/ё/g,'е').replace(/[а-яa-z]/g, ch => TRANSLIT[ch]||ch).replace(/[^а-яa-z0-9]/g,'');
+        return str.toString().toLowerCase().replace(/ё/g,'е').replace(/[а-яa-z]/g, ch => TRANSLIT[ch] || ch).replace(/[^а-яa-z0-9]/g,'');
     }
 
     let toastTimer;
     function showToast(msg) {
         const t = document.getElementById('toast');
-        t.textContent = msg; t.classList.add('show');
+        t.textContent = msg;
+        t.classList.add('show');
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => t.classList.remove('show'), 2800);
     }
 
+    const loader = document.getElementById('loader');
+    const hideLoader = () => loader.classList.add('hide');
+
+    /* ─── Карта ─── */
     const dgis = L.tileLayer('https://tile{s}.maps.2gis.com/tiles?z={z}&x={x}&y={y}&v=1', { subdomains:'0123', attribution:'2GIS' });
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution:'© OpenStreetMap', subdomains:'abc' });
     const googleSat = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { subdomains:['mt0','mt1','mt2','mt3'], attribution:'Google Satellite' });
@@ -182,9 +197,23 @@
         "<span style='font-size:15px'>🛰️ Спутник</span>": googleSat
     }, null, { collapsed:true, position:'bottomright' }).addTo(map);
 
+    // Fallback для 2ГИС с сбросом счётчика при смене слоя
     let tileErrors = 0;
-    dgis.on('tileerror', () => { tileErrors++; if (tileErrors > 5 && map.hasLayer(dgis)) { map.removeLayer(dgis); map.addLayer(osm); showToast('⚠️ 2ГИС недоступен'); } });
+    dgis.on('tileerror', () => {
+        tileErrors++;
+        if (tileErrors > 5 && map.hasLayer(dgis)) {
+            map.removeLayer(dgis);
+            map.addLayer(osm);
+            showToast('⚠️ 2ГИС недоступен');
+        }
+    });
+    map.on('baselayerchange', () => { tileErrors = 0; });
 
+    /* ─── Хранилище фото (WeakMap вместо JSON в data-*) ─── */
+    const photosStore = new Map(); // id → массив фото
+    const markerTitles = new Map(); // id → name
+
+    /* ─── Лайтбокс ─── */
     const lb = {
         el: document.getElementById('lightbox'),
         body: document.getElementById('lb-body'),
@@ -195,10 +224,12 @@
         prev: document.getElementById('lb-prev'),
         next: document.getElementById('lb-next'),
         hint: document.getElementById('lb-hint'),
-        photos: [], cur: 0,
+        photos: [], cur: 0, _hintTimer: null,
 
         open(photos, idx, title) {
-            lb.photos = photos; lb.cur = idx || 0;
+            if (!photos || !photos.length) return;
+            lb.photos = photos;
+            lb.cur = Math.max(0, Math.min(idx || 0, photos.length - 1));
             lb.title.textContent = title ? 'ТК: ' + title : '';
             lb.el.classList.add('active');
             document.body.style.overflow = 'hidden';
@@ -209,25 +240,33 @@
                 dot.addEventListener('click', () => lb.go(i));
                 lb.dots.appendChild(dot);
             });
-            lb.hint.style.opacity = '1';
+            lb.hint.style.opacity = photos.length > 1 ? '1' : '0';
             clearTimeout(lb._hintTimer);
-            lb._hintTimer = setTimeout(() => lb.hint.style.opacity = '0', 3000);
+            lb._hintTimer = setTimeout(() => { lb.hint.style.opacity = '0'; }, 3000);
             lb.show(lb.cur);
         },
         close() {
             lb.el.classList.remove('active');
             document.body.style.overflow = '';
+            lb.photo.onload = null;
+            lb.photo.onerror = null;
             lb.photo.src = '';
+            clearTimeout(lb._hintTimer);
         },
         go(idx) {
+            if (!lb.photos.length) return;
             idx = Math.max(0, Math.min(idx, lb.photos.length - 1));
-            if (idx === lb.cur && lb.photo.src) return;
-            lb.cur = idx; lb.show(idx);
+            if (idx === lb.cur) return;
+            lb.cur = idx;
+            lb.show(idx);
         },
         show(idx) {
             lb.photo.classList.add('loading');
             lb.photo.onload = () => lb.photo.classList.remove('loading');
-            lb.photo.onerror = () => { lb.photo.classList.remove('loading'); lb.photo.alt = '⚠️ Фото не загрузилось'; };
+            lb.photo.onerror = () => {
+                lb.photo.classList.remove('loading');
+                lb.photo.alt = '⚠️ Фото не загрузилось';
+            };
             lb.photo.src = lb.photos[idx];
             lb.photo.alt = 'Фото ' + (idx + 1);
             lb.counter.textContent = (idx + 1) + ' / ' + lb.photos.length;
@@ -237,147 +276,206 @@
         }
     };
 
-    document.getElementById('lb-close').addEventListener('click', () => lb.close());
+    document.getElementById('lb-close').addEventListener('click', lb.close);
     lb.prev.addEventListener('click', () => lb.go(lb.cur - 1));
     lb.next.addEventListener('click', () => lb.go(lb.cur + 1));
     document.addEventListener('keydown', e => {
         if (!lb.el.classList.contains('active')) return;
         if (e.key === 'Escape') lb.close();
-        if (e.key === 'ArrowLeft') lb.go(lb.cur - 1);
-        if (e.key === 'ArrowRight') lb.go(lb.cur + 1);
+        else if (e.key === 'ArrowLeft') lb.go(lb.cur - 1);
+        else if (e.key === 'ArrowRight') lb.go(lb.cur + 1);
     });
     lb.body.addEventListener('click', e => { if (e.target === lb.body) lb.close(); });
 
+    // Свайпы
     (function () {
         let startX = 0, startY = 0, swiping = false;
         lb.body.addEventListener('touchstart', e => {
             if (e.touches.length !== 1) return;
-            swiping = true; startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+            swiping = true;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
         }, { passive: true });
         lb.body.addEventListener('touchend', e => {
-            if (!swiping) return; swiping = false;
+            if (!swiping) return;
+            swiping = false;
             const dx = e.changedTouches[0].clientX - startX;
             const dy = Math.abs(e.changedTouches[0].clientY - startY);
             if (Math.abs(dx) > 60 && Math.abs(dx) > dy) {
-                if (dx < 0) lb.go(lb.cur + 1); else lb.go(lb.cur - 1);
+                lb.go(lb.cur + (dx < 0 ? 1 : -1));
             }
         }, { passive: true });
     })();
 
-    window._lbOpen = function(photosJson, idx, title) {
-        try { lb.open(JSON.parse(photosJson), idx, title); } catch(e) { console.error('lbOpen:', e); }
-    };
-
-    window.slidePhoto = function(id, dir, photosJson) {
+/* ─── Попап-слайдер ─── */
+    function updatePopupSlider(id, dir) {
+        const photos = photosStore.get(id);
+        if (!photos) return;
         const img = document.getElementById(id + '_img');
         const counter = document.getElementById(id + '_cnt');
         if (!img) return;
-        let photos;
-        try { photos = JSON.parse(photosJson); } catch(e) { return; }
-        let cur = parseInt(img.dataset.index || 0);
+        let cur = parseInt(img.dataset.index || '0', 10);
         cur = (cur + dir + photos.length) % photos.length;
-        img.dataset.index = cur; img.src = photos[cur]; img.dataset.photos = photosJson;
+        img.dataset.index = String(cur);
+        img.src = photos[cur];
         if (counter) counter.textContent = (cur + 1) + ' / ' + photos.length;
-    };
+    }
 
+    /* ─── Делегирование кликов по попапам (один раз) ─── */
+    map.getContainer().addEventListener('click', e => {
+        const prev = e.target.closest('.popup-prev');
+        if (prev) { updatePopupSlider(prev.dataset.id, -1); return; }
+
+        const next = e.target.closest('.popup-next');
+        if (next) { updatePopupSlider(next.dataset.id, 1); return; }
+
+        const open = e.target.closest('.popup-open');
+        if (open) {
+            const id = open.dataset.id;
+            const photos = photosStore.get(id) || [];
+            const title = markerTitles.get(id) || '';
+            const img = document.getElementById(id + '_img');
+            const idx = img ? parseInt(img.dataset.index || '0', 10) : 0;
+            lb.open(photos, idx, title);
+            return;
+        }
+
+        const sliderImg = e.target.closest('.slider-img');
+        if (sliderImg) {
+            const id = sliderImg.dataset.id;
+            const photos = photosStore.get(id) || [];
+            const title = markerTitles.get(id) || '';
+            const idx = parseInt(sliderImg.dataset.index || '0', 10);
+            lb.open(photos, idx, title);
+        }
+    });
+
+    /* ─── Данные и маркеры ─── */
     const markersData = [];
     const markerClusterGroup = L.markerClusterGroup();
 
-    Papa.parse(CSV_URL, {
-        download: true, header: true, skipEmptyLines: true,
-        complete(results) {
-            if (!results.data.length) { showToast('⚠️ CSV пустой'); return; }
-            results.data.forEach(row => {
-                const get = (...keys) => {
-                    for (const k of keys) {
-                        const f = Object.keys(row).find(rk => rk.trim().toLowerCase() === k.toLowerCase());
-                        if (f && row[f] !== undefined) return String(row[f]).trim();
-                    }
-                    return '';
-                };
-                const name = get('name');
-                const lat = parseFloat(get('lat'));
-                const lng = parseFloat(get('lng'));
-                const desc = get('description','desc');
-                const photos = get('photo','photos').split(',').map(s => s.trim()).filter(Boolean);
-                if (isNaN(lat) || isNaN(lng)) return;
+    function buildPopupHTML(id, name, desc, photos) {
+        const safeName = esc(name);
+        const safeDesc = esc(desc);
+        let html = '<div class="popup-title">ТК: ' + safeName + '</div>';
+        if (safeDesc) html += '<div class="popup-desc">' + safeDesc + '</div>';
 
-                const id = uid();
-                const photosJson = JSON.stringify(photos);
-                const safeName = esc(name);
-                const safeDesc = esc(desc);
-                const popupDiv = document.createElement('div');
-                let html = '<div class="popup-title">ТК: ' + safeName + '</div>';
-                if (safeDesc) html += '<div class="popup-desc">' + safeDesc + '</div>';
-                if (photos.length > 0) {
-                    html += '<div class="slider-wrap">'
-                        + '<img id="' + id + '_img" class="slider-img"'
-                        + ' src="' + esc(photos[0]) + '"'
-                        + ' data-index="0"'
-                        + " data-photos='" + esc(photosJson) + "'"
-                        + ' loading="lazy"'
-                        + ' alt="Фото ТК ' + safeName + '">'
-                        + '</div>';
-                    if (photos.length > 1) {
-                        html += '<div class="slider-controls">'
-                            + '<button class="slider-btn popup-prev" data-id="' + id + '">‹</button>'
-                            + '<span id="' + id + '_cnt" class="slider-counter">1 / ' + photos.length + '</span>'
-                            + '<button class="slider-btn popup-next" data-id="' + id + '">›</button>'
-                            + '</div>';
-                    }
-                    html += '<button class="slider-open-btn popup-open"'
-                        + " data-photos='" + esc(photosJson) + "'"
-                        + ' data-title="' + safeName + '"'
-                        + ' data-id="' + id + '">'
-                        + '🔍 Открыть на весь экран</button>';
+        if (photos.length > 0) {
+            html += '<div class="slider-wrap">'
+                + '<img id="' + id + '_img" class="slider-img"'
+                + ' src="' + esc(photos[0]) + '"'
+                + ' data-index="0"'
+                + ' data-id="' + id + '"'
+                + ' loading="lazy"'
+                + ' alt="Фото ТК ' + safeName + '">'
+                + '</div>';
+
+            if (photos.length > 1) {
+                html += '<div class="slider-controls">'
+                    + '<button class="slider-btn popup-prev" data-id="' + id + '" aria-label="Предыдущее фото">‹</button>'
+                    + '<span id="' + id + '_cnt" class="slider-counter">1 / ' + photos.length + '</span>'
+                    + '<button class="slider-btn popup-next" data-id="' + id + '" aria-label="Следующее фото">›</button>'
+                    + '</div>';
+            }
+            html += '<button class="slider-open-btn popup-open" data-id="' + id + '">'
+                + '🔍 Открыть на весь экран</button>';
+        }
+        return html;
+    }
+
+    function processData(rows) {
+        // Очищаем предыдущие маркеры (при обновлении из сети после кэша)
+        markerClusterGroup.clearLayers();
+        markersData.length = 0;
+        photosStore.clear();
+        markerTitles.clear();
+
+        rows.forEach(row => {
+            const get = (...keys) => {
+                for (const k of keys) {
+                    const f = Object.keys(row).find(rk => rk.trim().toLowerCase() === k.toLowerCase());
+                    if (f && row[f] !== undefined) return String(row[f]).trim();
                 }
-                popupDiv.innerHTML = html;
-                const marker = L.marker([lat, lng]);
-                marker.bindPopup(popupDiv, { maxWidth: 260 });
-                markerClusterGroup.addLayer(marker);
-                markersData.push({ key: normalize(name), name, desc, marker });
-            });
-            map.addLayer(markerClusterGroup);
-            showToast('✅ Загружено ' + markersData.length + ' объектов');
+                return '';
+            };
+            const name = get('name');
+            const lat = parseFloat(get('lat'));
+            const lng = parseFloat(get('lng'));
+            const desc = get('description', 'desc');
+            const photos = get('photo', 'photos')
+                .split(',')
+                .map(s => s.trim())
+                .filter(s => /^https?:\/\//i.test(s));
+
+            if (isNaN(lat) || isNaN(lng)) return;
+
+            const id = uid();
+            photosStore.set(id, photos);
+            markerTitles.set(id, name);
+
+            const popupDiv = document.createElement('div');
+            popupDiv.innerHTML = buildPopupHTML(id, name, desc, photos);
+
+            const marker = L.marker([lat, lng]);
+            marker.bindPopup(popupDiv, { maxWidth: 260 });
+            markerClusterGroup.addLayer(marker);
+            markersData.push({ key: normalize(name), name, desc, marker });
+        });
+
+        if (!map.hasLayer(markerClusterGroup)) map.addLayer(markerClusterGroup);
+        hideLoader();
+    }
+
+    /* ─── Загрузка с кэшем ─── */
+    function loadFromCache() {
+        try {
+            const raw = localStorage.getItem(CACHE_KEY);
+            if (!raw) return null;
+            const { data, ts } = JSON.parse(raw);
+            if (Date.now() - ts > CACHE_TTL) return null;
+            return data;
+        } catch (e) { return null; }
+    }
+
+    function saveToCache(data) {
+        try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify({ data, ts: Date.now() }));
+        } catch (e) { /* localStorage full / disabled */ }
+    }
+
+    // 1) Пробуем мгновенно отрисовать из кэша
+    const cached = loadFromCache();
+    if (cached && cached.length) {
+        processData(cached);
+        showToast('⚡ Загружено из кэша');
+    }
+
+    // 2) Параллельно обновляем из сети
+    Papa.parse(CSV_URL, {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete(results) {
+            if (!results.data || !results.data.length) {
+                if (!cached) { showToast('⚠️ CSV пустой'); hideLoader(); }
+                return;
+            }
+            processData(results.data);
+            saveToCache(results.data);
+            if (!cached) showToast('✅ Загружено ' + markersData.length + ' объектов');
         },
-        error(err) { console.error('CSV error:', err); showToast('❌ Не удалось загрузить данные'); }
+        error(err) {
+            console.error('CSV error:', err);
+            if (!cached) {
+                showToast('❌ Не удалось загрузить данные');
+                hideLoader();
+            } else {
+                showToast('⚠️ Использованы кэшированные данные');
+            }
+        }
     });
 
-    map.on('popupopen', e => {
-        const popupEl = e.popup.getElement();
-        if (!popupEl) return;
-        popupEl.querySelectorAll('.popup-prev').forEach(btn => {
-            btn.onclick = () => {
-                const imgEl = popupEl.querySelector('#' + btn.dataset.id + '_img');
-                if (imgEl) slidePhoto(btn.dataset.id, -1, imgEl.dataset.photos || '[]');
-            };
-        });
-        popupEl.querySelectorAll('.popup-next').forEach(btn => {
-            btn.onclick = () => {
-                const imgEl = popupEl.querySelector('#' + btn.dataset.id + '_img');
-                if (imgEl) slidePhoto(btn.dataset.id, 1, imgEl.dataset.photos || '[]');
-            };
-        });
-        popupEl.querySelectorAll('.popup-open').forEach(btn => {
-            btn.onclick = () => {
-                const pj = btn.getAttribute('data-photos') || '[]';
-                const t = btn.getAttribute('data-title') || '';
-                const imgEl = popupEl.querySelector('#' + btn.dataset.id + '_img');
-                const idx = parseInt(imgEl?.dataset.index || '0', 10);
-                window._lbOpen(pj, idx, t);
-            };
-        });
-        popupEl.querySelectorAll('.slider-img').forEach(img => {
-            img.onclick = () => {
-                const pj = img.dataset.photos || '[]';
-                const t = img.alt.replace(/^Фото ТК\s*/, '');
-                const idx = parseInt(img.dataset.index || '0', 10);
-                window._lbOpen(pj, idx, t);
-            };
-            img.onerror = () => { img.style.display = 'none'; };
-        });
-    });
-
+    /* ─── Поиск ─── */
     const input = document.getElementById('search');
     const resDiv = document.getElementById('results');
     const clearBtn = document.getElementById('clear-btn');
@@ -394,7 +492,8 @@
         const x = markersData[idx];
         if (!x) return;
         map.setView(x.marker.getLatLng(), 18);
-        x.marker.openPopup();
+        // Даём время кластеру «раскрыться»
+        setTimeout(() => x.marker.openPopup(), 300);
         input.value = x.name;
         clearBtn.classList.add('visible');
         hideResults();
@@ -408,7 +507,10 @@
             clearBtn.classList.toggle('visible', input.value.length > 0);
             if (q.length < 1) { hideResults(); return; }
 
-            const found = markersData.map((x, i) => ({x, i})).filter(({x}) => x.key.includes(q));
+            const found = markersData
+                .map((x, i) => ({ x, i }))
+                .filter(({ x }) => x.key.includes(q));
+
             resDiv.innerHTML = '';
 
             if (!found.length) {
@@ -419,11 +521,15 @@
 
             divider.classList.add('visible');
             const frag = document.createDocumentFragment();
-            found.slice(0, 20).forEach(({x, i}) => {
+            found.slice(0, 20).forEach(({ x, i }) => {
                 const el = document.createElement('div');
                 el.className = 'result-item';
                 el.dataset.idx = i;
-                el.innerHTML = '<div class="result-pin">📦</div><div><div>ТК: <b>' + esc(x.name) + '</b></div>' + (x.desc ? '<div class="result-sub">' + esc(x.desc) + '</div>' : '') + '</div>';
+                el.setAttribute('role', 'option');
+                el.innerHTML = '<div class="result-pin">📦</div>'
+                    + '<div><div>ТК: <b>' + esc(x.name) + '</b></div>'
+                    + (x.desc ? '<div class="result-sub">' + esc(x.desc) + '</div>' : '')
+                    + '</div>';
                 frag.appendChild(el);
             });
             resDiv.appendChild(frag);
@@ -432,7 +538,7 @@
 
     map.on('click', hideResults);
 
-    /* ─── ГЕОЛОКАЦИЯ ─── */
+    /* ─── Геолокация ─── */
     const userIcon = L.divIcon({
         className: '',
         html: '<div class="user-dot"><div class="user-pulse"></div></div>',
@@ -465,8 +571,12 @@
     });
 
     document.addEventListener('visibilitychange', () => {
-        if (document.hidden && locateActive) { map.stopLocate(); locateActive = false; }
-        else if (!document.hidden && watchStarted && !locateActive) startLocate();
+        if (document.hidden && locateActive) {
+            map.stopLocate();
+            locateActive = false;
+        } else if (!document.hidden && watchStarted && !locateActive) {
+            startLocate();
+        }
     });
 
 })();
